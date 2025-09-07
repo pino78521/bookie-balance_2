@@ -1,0 +1,912 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Moneyline Bookie Balancer (Target Vig) — Pro</title>
+  <style>
+    :root { --bg:#0f172a; --card:#111827; --text:#e5e7eb; --muted:#9ca3af; --accent:#22c55e; --warn:#f59e0b; --danger:#ef4444; --void:#6b7280; }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,Arial,"Apple Color Emoji","Segoe UI Emoji";}
+    .container{max-width:1100px;margin:24px auto;padding:0 16px;}
+    h1{font-size:1.6rem;margin:0 0 12px}
+    h2{font-size:1.15rem;margin:0 0 8px;color:var(--muted)}
+    .grid{display:grid;gap:12px}
+    @media(min-width:900px){.grid-2{grid-template-columns:1fr 1fr} .grid-3{grid-template-columns:1fr 1fr 1fr}}
+    .card{background:var(--card);border:1px solid #1f2937;border-radius:16px;box-shadow:0 6px 24px rgba(0,0,0,.25)}
+    .card .content{padding:16px}
+    label{display:block;font-size:.9rem;margin-bottom:6px;color:var(--muted)}
+    input, select, textarea{width:100%;padding:10px 12px;border-radius:12px;border:1px solid #374151;background:#0b1220;color:var(--text)}
+    textarea{min-height:42px;resize:vertical}
+    .btn{display:inline-block;background:var(--accent);color:#052e16;border:none;border-radius:12px;padding:10px 14px;font-weight:700;cursor:pointer}
+    .btn.secondary{background:#3b82f6;color:#051937}
+    .btn.ghost{background:#1f2937;color:#cbd5e1}
+    .btn.warn{background:#78350f;color:#fde68a}
+    .muted{color:var(--muted)}
+    ul{margin:8px 0;padding-left:18px}
+    .pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#1f2937;font-size:.8rem;margin-right:6px}
+    .warn{color:var(--warn)}
+    .danger{color:var(--danger)}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
+    .footer{font-size:.85rem;color:var(--muted);margin-top:10px}
+    .kpi{font-weight:700}
+    .hr{height:1px;background:#1f2937;margin:12px 0}
+    .small{font-size:.9rem}
+    .flex{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .switch{display:flex;align-items:center;gap:10px}
+    .switch input{width:auto}
+    table{width:100%;border-collapse:collapse}
+    th, td{padding:8px;border-bottom:1px solid #1f2937;text-align:left;vertical-align:top}
+    th{color:#cbd5e1;font-weight:600}
+    .right{text-align:right}
+    .badge{padding:2px 8px;border-radius:999px;background:#0b1220;border:1px solid #22304b}
+    .void{color:var(--void); text-decoration: line-through;}
+    .badge-void{background:#2b2f36;border-color:#374151;color:#9ca3af}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Moneyline Bookie Balancer <span class="muted">(Pro: Both Sides + Bets)</span></h1>
+    <div class="muted" id="marketTitleDisplay"></div>
+
+    <div class="grid grid-3">
+      <div class="card">
+        <div class="content">
+          <h2>Market Setup</h2>
+          <label>Market Title</label>
+          <input id="marketTitle" placeholder="e.g., Chiefs @ Chargers" />
+          <div class="hr"></div>
+          <label>Fixed Overround (THP) % <span class="muted">(sum of implied probs − 100)</span></label>
+          <input id="overroundPct" value="4.5" />
+          <div class="hr"></div>
+          <div class="grid grid-2">
+            <div>
+              <label>Initial Favorite ML (neg)</label>
+              <input id="favStart" value="-150"/>
+            </div>
+            <div>
+              <label>Initial Dog ML (pos)</label>
+              <input id="dogStart" value="+130"/>
+            </div>
+          </div>
+          <div class="hr"></div>
+          <label>Target Hold on Handle % <span class="muted">(for single-side helper)</span></label>
+          <input id="targetHoldPct" value="5"/>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="content">
+          <h2>Auto-Adjusted Odds (Both Sides)</h2>
+          <div id="autoOdds"></div>
+          <div class="small muted">Auto odds keep the chosen overround and tilt toward the under-bet side based on current stacks.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="content">
+          <h2>Book Snapshot</h2>
+          <div id="snapshot"></div>
+          <div class="hr"></div>
+          <h2>Exposure Preview (at Auto Odds)</h2>
+          <div id="exposurePreview" class="small"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="content">
+        <h2>Controls & Limits</h2>
+        <div class="grid grid-3">
+          <div class="switch">
+            <input type="checkbox" id="marketOpen" checked>
+            <label for="marketOpen"><strong>Market Open</strong> (toggle to close)</label>
+          </div>
+          <div>
+            <label>Max Stake per Bet ($)</label>
+            <input id="maxPerBet" value="1000"/>
+          </div>
+          <div>
+            <label>Max Total per Bettor ($)</label>
+            <input id="maxPerBettor" value="5000"/>
+          </div>
+        </div>
+        <div class="grid grid-3" style="margin-top:8px">
+          <div>
+            <label>When over a limit</label>
+            <select id="limitBehavior">
+              <option value="cap">Cap to limit</option>
+              <option value="reject">Reject bet</option>
+            </select>
+          </div>
+          <div>
+            <label>Max Market Handle ($)</label>
+            <input id="maxMarketHandle" value="20000"/>
+          </div>
+          <div>
+            <label>Market status</label>
+            <div id="marketStatus" class="pill">Open</div>
+          </div>
+        </div>
+        <div class="grid grid-3" style="margin-top:8px">
+          <div>
+            <label>Max Exposure if Favorite Wins ($)</label>
+            <input id="maxExpoFav" value="2000"/>
+          </div>
+          <div>
+            <label>Max Exposure if Dog Wins ($)</label>
+            <input id="maxExpoDog" value="2000"/>
+          </div>
+          <div>
+            <label>Backup / Restore</label>
+            <div class="flex">
+              <button class="btn ghost" id="exportBook">Export Book</button>
+              <button class="btn ghost" id="importBook">Import Book</button>
+              <button class="btn ghost" id="clearLocal">Clear Local Backup</button>
+              <button class="btn ghost" id="duplicateMarket">Duplicate Market</button>
+              <input type="file" id="importFile" accept="application/json" style="display:none"/>
+            </div>
+          </div>
+        </div>
+        <div class="small muted" style="margin-top:6px">
+          Exposure caps are worst-case loss thresholds using starting odds. Voided tickets are excluded from all limits/stack calcs.
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="content">
+        <h2>Post a Bet</h2>
+        <div class="grid grid-3">
+          <div>
+            <label>Bettor Name</label>
+            <input id="bettor" placeholder="e.g., Alex R." />
+          </div>
+          <div>
+            <label>Side</label>
+            <select id="side">
+              <option value="fav">Favorite</option>
+              <option value="dog">Underdog</option>
+            </select>
+          </div>
+          <div>
+            <label>Stake ($)</label>
+            <input id="stake" placeholder="e.g., 200"/>
+          </div>
+        </div>
+        <div class="grid grid-1" style="margin-top:8px">
+          <div>
+            <label>Notes (optional)</label>
+            <textarea id="notes" placeholder="ticket#, payment method, contact, etc."></textarea>
+          </div>
+        </div>
+        <div class="flex" style="margin-top:10px">
+          <button class="btn" id="addBet">Add Bet</button>
+          <button class="btn ghost" id="clearBets">Clear All Bets</button>
+          <button class="btn secondary" id="exportCsv">Export CSV</button>
+          <span class="muted small">Odds auto-recompute after each bet.</span>
+        </div>
+        <div id="limitNotice" class="small" style="margin-top:8px"></div>
+      </div>
+    </div>
+
+    <div class="grid grid-2" style="margin-top:12px">
+      <div class="card">
+        <div class="content">
+          <h2>Bets Ledger</h2>
+          <div id="betsTable"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="content">
+          <h2>Single-Side Helper (Meets Target Hold)</h2>
+          <div id="singleSideHelper"></div>
+          <div class="small muted">This suggests a one-side move & new action needed to lock in the target hold.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Single Settlement panel (clean) -->
+    <div class="card" style="margin-top:12px">
+      <div class="content">
+        <h2>Settlement</h2>
+        <div class="grid grid-3">
+          <div>
+            <label>Winning Side</label>
+            <select id="winnerSide">
+              <option value="fav">Favorite</option>
+              <option value="dog">Underdog</option>
+            </select>
+          </div>
+          <div>
+            <label>Price Basis</label>
+            <select id="settleBasis">
+              <option value="ticket">Ticket Price (at bet time)</option>
+              <option value="start">Starting Odds</option>
+            </select>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button class="btn secondary" id="gradeTickets">Grade Tickets</button>
+            <button class="btn ghost" id="ungradeMarket">Ungrade Market</button>
+          </div>
+        </div>
+        <div class="small muted" style="margin-top:6px">
+          Ticket Price uses the auto-quoted ML captured when each bet was posted. Older imports without stored prices fall back to starting odds automatically.
+        </div>
+        <div class="hr"></div>
+        <div id="settlementSummary"></div>
+        <div class="flex" style="margin-top:10px">
+          <button class="btn secondary" id="exportPayouts">Export Payout Report</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="content small">
+        <strong>How auto odds work (both sides):</strong>
+        <div class="hr"></div>
+        <p>We transform current stacks into target implied probabilities keeping a fixed overround O = 1 + (overround%/100). If current stacks are F and U, we set <span class="mono">p_f = O · F/(F+U)</span> and <span class="mono">p_d = O · U/(F+U)</span>, then convert to moneylines. This tilts prices toward the under‑bet side while preserving your chosen theoretical edge in the odds themselves.</p>
+        <p>American ML conversions: if <span class="mono">p ≥ 0.5</span> → <span class="mono">ML = −100·p/(1−p)</span>; if <span class="mono">p < 0.5</span> → <span class="mono">ML = +100·(1−p)/p</span>.</p>
+        <p><em>Note:</em> Adjusting odds cannot change exposure already taken. Profit is not guaranteed on existing handle; it is steered for future flow. Use the single‑side helper to compute price + new action needed to lock in a desired handle‑level hold.</p>
+        <p class="footer">Legal: booking may require a license where you live. Educational use only.</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+
+(function(){
+  function toNumber(v, fallback=0){
+    const x = Number(String(v||'').replace(/[^0-9.\-]/g,''));
+    return Number.isFinite(x) ? x : fallback;
+  }
+  function money(x){ return (Number.isFinite(x)? ('$' + x.toFixed(2)) : '—'); }
+  function fmtML(ml){ if(!Number.isFinite(ml)) return '—'; return (ml>0? '+'+Math.round(ml): '−'+Math.round(Math.abs(ml))).replace('−-','−'); }
+  function sum(a){ return a.reduce((s,x)=>s+x,0); }
+  function escapeHtml(s){
+    return String(s).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+  }
+  function localTime(tsIso){
+    try{ return new Date(tsIso).toLocaleString(); }catch(e){ return tsIso; }
+  }
+  function mlFromProb(p){
+    if(!(p>0 && p<1)) return NaN;
+    if (p >= 0.5) return -100 * p / (1 - p);
+    return  100 * (1 - p) / p;
+  }
+  const $ = (id)=>document.getElementById(id);
+
+  // Elements
+  const marketTitle = $('marketTitle');
+  const marketTitleDisplay = $('marketTitleDisplay');
+  const overroundPct = $('overroundPct');
+  const favStart = $('favStart');
+  const dogStart = $('dogStart');
+  const targetHoldPct = $('targetHoldPct');
+
+  const autoOdds = $('autoOdds');
+  const snapshot = $('snapshot');
+  const exposurePreview = $('exposurePreview');
+  const singleSideHelper = $('singleSideHelper');
+  const betsTable = $('betsTable');
+
+  const bettor = $('bettor');
+  const side = $('side');
+  const stake = $('stake');
+  const notes = $('notes');
+  const addBet = $('addBet');
+  const clearBets = $('clearBets');
+  const exportCsv = $('exportCsv');
+
+  const maxPerBet = $('maxPerBet');
+  const maxPerBettor = $('maxPerBettor');
+  const limitBehavior = $('limitBehavior');
+  const limitNotice = $('limitNotice');
+  const maxMarketHandle = $('maxMarketHandle');
+  const marketStatus = $('marketStatus');
+  const marketOpen = $('marketOpen');
+  const maxExpoFav = $('maxExpoFav');
+  const maxExpoDog = $('maxExpoDog');
+
+  const exportBookBtn = $('exportBook');
+  const importBookBtn = $('importBook');
+  const importFile = $('importFile');
+  const clearLocalBtn = $('clearLocal');
+  const duplicateMarketBtn = $('duplicateMarket');
+
+  // Settlement
+  const winnerSide = $('winnerSide');
+  const settleBasis = $('settleBasis');
+  const gradeTickets = $('gradeTickets');
+  const ungradeMarket = $('ungradeMarket');
+  const settlementSummary = $('settlementSummary');
+  const exportPayouts = $('exportPayouts');
+
+  // State
+  let bets = []; // {id, name, side, stake, ts, notes, voided, price_ml, settled, paid}
+  let nextId = 1;
+  let lastSettlement = null; // {winnerSide, basis, graded_at, totals}
+
+  function stacks(){
+    const F = sum(bets.filter(b=>!b.voided && b.side==='fav').map(b=>b.stake));
+    const U = sum(bets.filter(b=>!b.voided && b.side==='dog').map(b=>b.stake));
+    return {F,U};
+  }
+  function totalByBettor(name){
+    return sum(bets.filter(b=>!b.voided && b.name===name).map(b=>b.stake));
+  }
+  function handleNow(){
+    const {F,U} = stacks(); return F+U;
+  }
+  function currentNetsAtStartOdds(F,U){
+    const a0 = Math.abs(toNumber(favStart.value));
+    const b0 = Math.abs(toNumber(dogStart.value));
+    const netFav = (a0>0) ? (U - F*(100/a0)) : 0;
+    const netDog = (b0>0) ? (F - U*(b0/100)) : 0;
+    return {netFav, netDog, a0, b0};
+  }
+
+  function renderBets(){
+    if(!bets.length){
+      betsTable.innerHTML = '<p class="muted">No bets yet.</p>';
+      return;
+    }
+    let html = '<table><thead><tr><th>ID</th><th>Time</th><th>Bettor</th><th>Side</th><th class="right">Stake</th><th>Ticket ML</th><th>Paid</th><th>Notes</th><th></th></tr></thead><tbody>';
+    for(const b of bets){
+      const rowClass = b.voided ? 'class="void"' : '';
+      html += '<tr '+rowClass+'>';
+      html += '<td class="mono small">#'+b.id+(b.voided?' <span class="badge badge-void">VOID</span>':'')+(b.settled? ' <span class="badge">SETTLED</span>':'')+'</td>';
+      html += '<td class="small">'+escapeHtml(localTime(b.ts))+'</td>';
+      html += '<td>'+escapeHtml(b.name||'—')+'</td>';
+      html += '<td><span class="badge">'+(b.side==='fav'?'Favorite':'Underdog')+'</span></td>';
+      html += '<td class="right">'+money(b.stake)+'</td>';
+      html += '<td class="mono small">'+(Number.isFinite(b.price_ml)? (b.price_ml>0? ('+'+Math.round(b.price_ml)):('−'+Math.round(Math.abs(b.price_ml)))) : '—')+'</td>';
+      // Paid toggle for settled winners
+      (function(){
+        let isWinner=false;
+        if(lastSettlement && b.settled && !b.voided){ isWinner = (b.side === lastSettlement.winnerSide); }
+        if(isWinner){
+          html += '<td><button class="btn ghost" data-paid="'+b.id+'">'+(b.paid?'Mark Unpaid':'Mark Paid')+'</button></td>';
+        } else {
+          html += '<td class="small muted">—</td>';
+        }
+      })();
+      html += '<td class="small">'+escapeHtml(b.notes||'')+'</td>';
+      html += '<td class="right">';
+      html += '<button class="btn ghost" data-edit="'+b.id+'">Edit Notes</button> ';
+      if(b.settled){
+        html += '<button class="btn warn" data-void="'+b.id+'" disabled title="Locked after settlement. Use Ungrade to modify.">'+(b.voided?'Unvoid':'Void')+' (Locked)</button>';
+      } else {
+        html += '<button class="btn warn" data-void="'+b.id+'">'+(b.voided?'Unvoid':'Void')+'</button>';
+      }
+      html += '</td>';
+      html += '</tr>';
+    }
+    html += '</tbody></table>';
+    betsTable.innerHTML = html;
+
+    // bind actions
+    betsTable.querySelectorAll('button[data-void]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const id = Number(btn.getAttribute('data-void'));
+        const i = bets.findIndex(x=>x.id===id);
+        if(i>=0){
+          if(bets[i].settled){
+            showLimitNotice('Ticket #'+id+' is settled and locked. Use Ungrade to modify.', true);
+            return;
+          }
+          bets[i].voided = !bets[i].voided;
+          computeAll();
+        }
+      });
+    });
+    betsTable.querySelectorAll('button[data-edit]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const id = Number(btn.getAttribute('data-edit'));
+        const i = bets.findIndex(x=>x.id===id);
+        if(i>=0){
+          const newNotes = prompt('Edit notes for ticket #'+id, bets[i].notes||'');
+          if(newNotes!==null){
+            bets[i].notes = newNotes;
+            computeAll();
+          }
+        }
+      });
+    });
+    betsTable.querySelectorAll('button[data-paid]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const id = Number(btn.getAttribute('data-paid'));
+        const i = bets.findIndex(x=>x.id===id);
+        if(i>=0){
+          bets[i].paid = !bets[i].paid;
+          computeAll();
+          showLimitNotice(bets[i].paid ? ('Ticket #'+id+' marked PAID.') : ('Ticket #'+id+' marked UNPAID.'), false);
+        }
+      });
+    });
+  }
+
+  function autoBothSidesOdds(F, U){
+    const O = 1 + Math.max(0, toNumber(overroundPct.value)/100);
+    if (!Number.isFinite(O) || O<1) return {pf:NaN, pd:NaN, a:NaN, b:NaN, note:'Invalid overround%'};
+    const H = F + U;
+    if (H <= 0){
+      const a0 = Math.abs(toNumber(favStart.value));
+      const b0 = Math.abs(toNumber(dogStart.value));
+      if(!(a0>0 && b0>0)) return {pf:NaN, pd:NaN, a:NaN, b:NaN, note:'Enter starting odds'};
+      const pf0 = a0/(a0+100);
+      const pd0 = 100/(b0+100);
+      const s = O/(pf0+pd0);
+      const pf = pf0*s, pd = pd0*s;
+      const a = mlFromProb(pf);
+      const b = mlFromProb(pd);
+      return {pf, pd, a, b, note:'No bets yet: using starting-implied split scaled to chosen overround.'};
+    }
+    const pf = O * (F/(H));
+    const pd = O * (U/(H));
+    const clamp = (x)=> Math.max(0.001, Math.min(0.999, x));
+    const pfC = clamp(pf), pdC = clamp(pd);
+    const a = mlFromProb(pfC);
+    const b = mlFromProb(pdC);
+    return {pf:pfC, pd:pdC, a, b, note:'Proportional to stacks; preserves overround.'};
+  }
+
+  function singleSideSuggestion(F,U){
+    const a0 = Math.abs(toNumber(favStart.value));
+    const b0 = Math.abs(toNumber(dogStart.value));
+    const h  = Math.max(0, toNumber(targetHoldPct.value)/100);
+    if(!(a0>0 && b0>0 && (F+U)>0) || !(h>=0 && isFinite(h))) return {html:'<p class="muted">Enter starting odds, target hold, and have some handle.</p>'};
+
+    const netIfFavNow = U - F*(100/a0);
+    const netIfDogNow = F - U*(b0/100);
+    const handleNow = F + U;
+    const favOverloaded = netIfFavNow < netIfDogNow;
+    let warnings = [];
+    if (h >= 1) warnings.push('Target hold must be less than 100%.');
+
+    let html = '';
+    if (favOverloaded){
+      const denom = 1 - h;
+      if (denom <= 0){
+        warnings.push('Target hold too high for current imbalance. Lower hold% or move both sides.');
+      } else {
+        const dU = (h*handleNow + F*(100/a0) - U) / denom;
+        const H = h*(handleNow + dU);
+        const denomB = H + F*(100/a0) - U;
+        if (denomB <= 0){
+          warnings.push('Target hold too high for current imbalance. Lower hold% or move both sides.');
+        } else {
+          const b = (100 * (F - U*(b0/100) - H)) / denomB;
+          if (isFinite(b) && b>0){
+            html += '<p>Overloaded side: <b>Favorite</b></p>';
+            html += '<p>Action: <b>Increase underdog price</b></p>';
+            html += '<ul><li>New Underdog Price: <b>'+(b>0?('+'+Math.round(b)):Math.round(b))+'</b></li>';
+            html += '<li>Additional Dog Action Needed: <b>'+money(Math.max(0,dU))+'</b></li></ul>';
+            html += '<div class="hr"></div>';
+            html += '<ul><li>Final Handle: <b>'+money(handleNow + Math.max(0,dU))+'</b></li>';
+            html += '<li>Guaranteed Profit (either outcome): <b>'+money(H)+'</b></li></ul>';
+          } else {
+            warnings.push('No feasible solution at these settings (dog side). Try a lower hold%.');
+          }
+        }
+      }
+    } else {
+      const denom = 1 - h;
+      if (denom <= 0){
+        warnings.push('Target hold too high for current imbalance. Lower hold% or move both sides.');
+      } else {
+        const dF = (h*handleNow + U*(b0/100) - F) / denom;
+        const H = h*(handleNow + dF);
+        const denomA = U - F*(100/a0) - H;
+        if (denomA <= 0){
+          warnings.push('Target hold too high for current imbalance. Lower hold% or move both sides.');
+        } else {
+          const a = (100 * (H + U*(b0/100) - F)) / denomA;
+          if (isFinite(a) && a>0){
+            html += '<p>Overloaded side: <b>Underdog</b></p>';
+            html += '<p>Action: <b>Increase favorite price magnitude</b></p>';
+            html += '<ul><li>New Favorite Price: <b>−'+Math.round(a)+'</b></li>';
+            html += '<li>Additional Favorite Action Needed: <b>'+money(Math.max(0,dF))+'</b></li></ul>';
+            html += '<div class="hr"></div>';
+            html += '<ul><li>Final Handle: <b>'+money(handleNow + Math.max(0,dF))+'</b></li>';
+            html += '<li>Guaranteed Profit (either outcome): <b>'+money(H)+'</b></li></ul>';
+          } else {
+            warnings.push('No feasible solution at these settings (favorite side). Try a lower hold%.');
+          }
+        }
+      }
+    }
+    if (warnings.length){
+      html += '<div class="hr"></div><div class="small">';
+      warnings.forEach(w => html += '<div>• '+w+'</div>');
+      html += '</div>';
+    }
+    return {html};
+  }
+
+  function computeExposurePreview(F,U,aAuto,bAuto){
+    if(!(Number.isFinite(aAuto) && Number.isFinite(bAuto))) return '<p class="muted">Set auto odds first.</p>';
+    const netFav = U - F*(100/Math.abs(aAuto));
+    const netDog = F - U*(Math.abs(bAuto)/100);
+    let html = '<ul>';
+    html += '<li>Preview net if <b>Favorite</b> wins (at auto odds): <span class="kpi">'+money(netFav)+'</span></li>';
+    html += '<li>Preview net if <b>Underdog</b> wins (at auto odds): <span class="kpi">'+money(netDog)+'</span></li>';
+    html += '<li class="small muted">Preview assumes future bets land near these prices; existing tickets may be at different odds.</li>';
+    html += '</ul>';
+    return html;
+  }
+
+  function renderCSV(){
+    const rows = [['market_title','id','bettor','side','stake','timestamp_iso','price_ml','notes','voided','settled']];
+    for(const b of bets){
+      rows.push([marketTitle.value||'', b.id, b.name, b.side, b.stake, b.ts, Number.isFinite(b.price_ml)?b.price_ml:'', b.notes||'', b.voided?1:0, b.settled?1:0]);
+    }
+    const csv = rows.map(r=>r.map(x=>('"'+String(x).replace(/"/g,'""')+'"')).join(',')).join('\n');
+    const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'bets_ledger.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  // Save / Load
+  function buildState(){
+    return {
+      version: 1,
+      saved_at: new Date().toISOString(),
+      settings: {
+        marketTitle: marketTitle.value,
+        overroundPct: overroundPct.value,
+        favStart: favStart.value,
+        dogStart: dogStart.value,
+        targetHoldPct: targetHoldPct.value,
+        maxPerBet: maxPerBet.value,
+        maxPerBettor: maxPerBettor.value,
+        limitBehavior: limitBehavior.value,
+        maxMarketHandle: maxMarketHandle.value,
+        marketOpen: marketOpen.checked,
+        maxExpoFav: maxExpoFav.value,
+        maxExpoDog: maxExpoDog.value,
+        lastSettlement
+      },
+      bets,
+      nextId
+    };
+  }
+  function downloadJSON(obj, filename){
+    const json = JSON.stringify(obj, null, 2);
+    const blob = new Blob([json], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+  function two(n){ return String(n).padStart(2,'0'); }
+  function timestampName(){
+    const d = new Date();
+    return d.getFullYear()+two(d.getMonth()+1)+two(d.getDate())+'_'+two(d.getHours())+two(d.getMinutes())+two(d.getSeconds());
+  }
+  function exportBook(){ downloadJSON(buildState(), `book_export_${timestampName()}.json`); }
+  function restoreStateObject(obj){
+    if(!obj || typeof obj !== 'object') throw new Error('Invalid state');
+    if(!obj.settings || !Array.isArray(obj.bets)) throw new Error('Missing keys');
+    marketTitle.value = obj.settings.marketTitle ?? marketTitle.value;
+    overroundPct.value = obj.settings.overroundPct ?? overroundPct.value;
+    favStart.value = obj.settings.favStart ?? favStart.value;
+    dogStart.value = obj.settings.dogStart ?? dogStart.value;
+    targetHoldPct.value = obj.settings.targetHoldPct ?? targetHoldPct.value;
+    maxPerBet.value = obj.settings.maxPerBet ?? maxPerBet.value;
+    maxPerBettor.value = obj.settings.maxPerBettor ?? maxPerBettor.value;
+    limitBehavior.value = obj.settings.limitBehavior ?? limitBehavior.value;
+    maxMarketHandle.value = obj.settings.maxMarketHandle ?? maxMarketHandle.value;
+    marketOpen.checked = !!(obj.settings.marketOpen ?? marketOpen.checked);
+    maxExpoFav.value = obj.settings.maxExpoFav ?? maxExpoFav.value;
+    maxExpoDog.value = obj.settings.maxExpoDog ?? maxExpoDog.value;
+    lastSettlement = obj.settings.lastSettlement ?? null;
+    bets = obj.bets.map(b => ({
+      id: Number(b.id),
+      name: String(b.name||''),
+      side: (b.side==='dog'?'dog':'fav'),
+      stake: Number(b.stake)||0,
+      ts: b.ts || new Date().toISOString(),
+      notes: String(b.notes||''),
+      voided: !!b.voided,
+      price_ml: (typeof b.price_ml === 'number') ? b.price_ml : NaN,
+      settled: !!b.settled,
+      paid: !!b.paid
+    }));
+    nextId = Number(obj.nextId)|| (bets.reduce((m,b)=>Math.max(m,b.id),0)+1);
+  }
+  function importBook(file){
+    const reader = new FileReader();
+    reader.onload = (e)=>{
+      try{
+        const obj = JSON.parse(String(e.target.result||'{}'));
+        restoreStateObject(obj);
+        showLimitNotice('Book imported.', false);
+        computeAll(); saveStateToLocal();
+      }catch(err){ console.error(err); showLimitNotice('Import failed: invalid JSON file.', true); }
+    };
+    reader.readAsText(file);
+  }
+
+  // Auto Backup
+  const LS_KEY = 'bookie_pro_state_v1';
+  function saveStateToLocal(){
+    try{ localStorage.setItem(LS_KEY, JSON.stringify(buildState())); }catch(e){}
+  }
+  function tryRestoreFromLocal(){
+    try{
+      const raw = localStorage.getItem(LS_KEY);
+      if(!raw) return false;
+      restoreStateObject(JSON.parse(raw));
+      showLimitNotice('Session auto-restored from your browser.', false);
+      computeAll(); return true;
+    }catch(e){ console.warn('Auto-restore failed', e); return false; }
+  }
+
+  function computeAll(){
+    const {F,U} = stacks();
+    const handle = F + U;
+    const {netFav, netDog} = currentNetsAtStartOdds(F,U);
+    const {pf,pd,a,b,note} = autoBothSidesOdds(F,U);
+
+    let snap = '<ul>';
+    snap += '<li>Total handle (non‑void): <span class="kpi">'+money(handle)+'</span></li>';
+    snap += '<li>Current nets at starting odds:</li>';
+    snap += '<li class="small">• If Favorite wins: <span class="kpi">'+money(netFav)+'</span></li>';
+    snap += '<li class="small">• If Dog wins: <span class="kpi">'+money(netDog)+'</span></li>';
+    const capF = Math.max(0, toNumber(maxExpoFav.value));
+    const capD = Math.max(0, toNumber(maxExpoDog.value));
+    snap += '<li class="small">Exposure caps (loss ≤): Fav '+money(capF)+', Dog '+money(capD)+'</li>';
+    snap += '<li>Auto overround target: <span class="kpi">'+(toNumber(overroundPct.value)).toFixed(2)+'%</span></li>';
+    snap += '</ul>';
+    snapshot.innerHTML = snap;
+
+    const mmh = Math.max(0, toNumber(maxMarketHandle.value));
+    const openByHandle = (mmh===0) || (handle < mmh);
+    const openBySwitch = !!marketOpen.checked;
+    marketStatus.textContent = (openByHandle && openBySwitch) ? 'Open' : (openBySwitch ? 'Closed (Handle Cap)' : 'Closed (Manual)');
+    marketStatus.style.background = (openByHandle && openBySwitch) ? '#1f2937' : '#3f1d1d';
+
+    let ao = '';
+    if (Number.isFinite(a) && Number.isFinite(b)){
+      ao += '<div class="flex">';
+      ao += '<div class="pill">Implied p_f: '+(pf*100).toFixed(2)+'%</div>';
+      ao += '<div class="pill">Implied p_d: '+(pd*100).toFixed(2)+'%</div>';
+      ao += '</div><div class="hr"></div><div class="grid grid-2">';
+      ao += '<div><div class="muted small">Post this Favorite ML</div><div class="kpi mono">'+fmtML(a)+'</div></div>';
+      ao += '<div><div class="muted small">Post this Dog ML</div><div class="kpi mono">'+fmtML(b)+'</div></div>';
+      ao += '</div><div class="hr"></div><div class="small muted">'+escapeHtml(note)+'</div>';
+    } else {
+      ao += '<p class="muted">Enter overround% and starting odds (or place bets) to compute auto odds.</p>';
+    }
+    autoOdds.innerHTML = ao;
+
+    exposurePreview.innerHTML = computeExposurePreview(F,U,a,b);
+    const helper = singleSideSuggestion(F,U);
+    singleSideHelper.innerHTML = helper.html;
+    renderBets();
+    marketTitleDisplay.textContent = marketTitle.value ? ('Market: ' + marketTitle.value) : '';
+    saveStateToLocal();
+  }
+
+  // Exposure limits
+  function maxStakeAllowedByExposure(sideSel, requestedStake){
+    const {F,U} = stacks();
+    const {a0,b0} = currentNetsAtStartOdds(F,U);
+    const capF = Math.max(0, toNumber(maxExpoFav.value));
+    const capD = Math.max(0, toNumber(maxExpoDog.value));
+    let sMax = requestedStake;
+    if(sideSel==='fav' && a0>0){
+      const limit = (capF + U)*(a0/100) - F;
+      sMax = Math.min(sMax, limit);
+    }
+    if(sideSel==='dog' && b0>0){
+      const limit = (capD + F)*(100/b0) - U;
+      sMax = Math.min(sMax, limit);
+    }
+    return sMax;
+  }
+  function applyLimits(name, requestedStake, sideSel){
+    const behavior = (limitBehavior.value==='reject') ? 'reject' : 'cap';
+    const marketCap = Math.max(0, toNumber(maxMarketHandle.value));
+    if(!marketOpen.checked){ return {accepted:0, reason:'Market closed (manual).', notices:[]}; }
+    let allowed = requestedStake; let notices = [];
+    const maxBet = Math.max(0, toNumber(maxPerBet.value));
+    if (maxBet > 0 && allowed > maxBet){
+      if (behavior==='reject'){ return {accepted:0, reason:'Per-bet limit '+money(maxBet)+' exceeded', notices}; }
+      allowed = Math.min(allowed, maxBet); notices.push('Per-bet limit applied: capped to '+money(maxBet));
+    }
+    const maxBettor = Math.max(0, toNumber(maxPerBettor.value));
+    if (maxBettor > 0){
+      const already = totalByBettor(name);
+      const remaining = Math.max(0, maxBettor - already);
+      if (remaining <= 0){ return {accepted:0, reason:'Bettor has reached their total limit '+money(maxBettor), notices}; }
+      if (allowed > remaining){
+        if (behavior==='reject'){ return {accepted:0, reason:'Per-bettor total limit would be exceeded', notices}; }
+        notices.push('Per-bettor total limit applied: capped to '+money(remaining)); allowed = remaining;
+      }
+    }
+    const currentHandle = handleNow();
+    if (marketCap > 0){
+      const marketRemaining = Math.max(0, marketCap - currentHandle);
+      if (marketRemaining <= 0){ return {accepted:0, reason:'Market closed: handle limit '+money(marketCap)+' reached', notices}; }
+      if (allowed > marketRemaining){
+        if (behavior==='reject'){ return {accepted:0, reason:'Market handle limit would be exceeded', notices}; }
+        notices.push('Market limit applied: capped to '+money(marketRemaining)); allowed = marketRemaining;
+      }
+    }
+    const exposureAllowed = maxStakeAllowedByExposure(sideSel, allowed);
+    if (!Number.isFinite(exposureAllowed)){ return {accepted:0, reason:'Invalid odds for exposure calculation.', notices}; }
+    if (exposureAllowed < 0){
+      if (behavior==='reject'){ return {accepted:0, reason:'Exposure cap hit for '+(sideSel==='fav'?'Favorite':'Dog')+' side.', notices}; }
+      return {accepted:0, reason:'Exposure cap hit; cannot accept any more on this side.', notices};
+    }
+    if (exposureAllowed < allowed){
+      if (behavior==='reject'){ return {accepted:0, reason:'Exposure cap would be exceeded on '+(sideSel==='fav'?'Favorite':'Dog')+' side.', notices}; }
+      notices.push('Exposure cap applied: capped to '+money(Math.max(0,exposureAllowed))); allowed = Math.max(0, exposureAllowed);
+    }
+    return {accepted:allowed, reason:'', notices};
+  }
+  function showLimitNotice(text, isError=false){
+    limitNotice.innerHTML = text ? '<span class="'+(isError?'danger':'warn')+'">'+escapeHtml(text)+'</span>' : '';
+  }
+
+  // Add bet
+  addBet.addEventListener('click', ()=>{
+    const name = (bettor.value.trim() || 'Anonymous');
+    const reqStake = Math.max(0, toNumber(stake.value));
+    const sd = side.value === 'dog' ? 'dog' : 'fav';
+    const noteText = (notes.value || '').trim();
+    if (reqStake <= 0){ showLimitNotice('Enter a positive stake.', true); return; }
+    const {accepted, reason, notices} = applyLimits(name, reqStake, sd);
+    if (accepted <= 0){ showLimitNotice(reason || 'Bet rejected by limits.', true); return; }
+    let msg = ''; if (notices.length){ msg = notices.join(' • '); } showLimitNotice(msg, false);
+
+    // capture ticket price at time of bet (auto odds or fallback to start)
+    let ticketPrice = NaN;
+    (function(){
+      const st = stacks();
+      const auto = autoBothSidesOdds(st.F, st.U);
+      if(Number.isFinite(auto.a) && Number.isFinite(auto.b)){
+        ticketPrice = (sd==='fav') ? auto.a : auto.b;
+      } else {
+        const a0 = Math.abs(toNumber(favStart.value));
+        const b0 = Math.abs(toNumber(dogStart.value));
+        ticketPrice = (sd==='fav' && a0>0) ? -a0 : ((sd==='dog' && b0>0)? b0 : NaN);
+      }
+    })();
+
+    bets.push({id: nextId++, name, side: sd, stake: accepted, ts: new Date().toISOString(), notes: noteText, voided:false, price_ml: ticketPrice, settled:false, paid:false});
+    bettor.value = ''; stake.value=''; notes.value='';
+    computeAll();
+  });
+  clearBets.addEventListener('click', ()=>{
+    if (confirm('Clear all bets? (This will remove even VOID tickets)')){
+      bets = []; nextId = 1; computeAll(); showLimitNotice('');
+    }
+  });
+  exportCsv.addEventListener('click', ()=>{ if (!bets.length){ showLimitNotice('No bets to export.', true); return; } renderCSV(); });
+
+  // Import/Export & backup
+  exportBookBtn.addEventListener('click', exportBook);
+  importBookBtn.addEventListener('click', ()=> importFile.click());
+  importFile.addEventListener('change', ()=>{ if(importFile.files && importFile.files[0]){ importBook(importFile.files[0]); importFile.value=''; } });
+  clearLocalBtn.addEventListener('click', ()=>{ try{ localStorage.removeItem(LS_KEY); showLimitNotice('Local backup cleared from this browser.', false);}catch(e){ showLimitNotice('Could not clear local backup.', true);} });
+  duplicateMarketBtn.addEventListener('click', ()=>{
+    if(!confirm('Start a fresh market using the same settings? Bets ledger will be cleared.')) return;
+    bets = []; nextId = 1; computeAll(); saveStateToLocal(); showLimitNotice('New market created with existing setup. Ledger reset.', false);
+  });
+
+  // Settlement math & UI
+  function americanProfit(stake, ml){
+    if(!Number.isFinite(stake) || !Number.isFinite(ml)) return 0;
+    return (ml < 0) ? stake * (100/Math.abs(ml)) : stake * (ml/100);
+  }
+  function ticketProfit(stake, ml){ return americanProfit(stake, ml); }
+  function gradeAllTickets(){
+    const winSide = (winnerSide.value==='dog') ? 'dog' : 'fav';
+    const basis = (settleBasis.value==='start') ? 'start' : 'ticket';
+
+    let totalHandle = 0, winners = 0, losers = 0;
+    let totalLosersStake = 0, totalWinnersProfit = 0, missingPrices = 0;
+
+    const a0 = Math.abs(toNumber(favStart.value));
+    const b0 = Math.abs(toNumber(dogStart.value));
+
+    for(const b of bets){
+      if(b.voided) continue;
+      totalHandle += b.stake;
+      const isWinner = (b.side === winSide);
+      let ml = NaN;
+      if(basis==='ticket' && Number.isFinite(b.price_ml)){ ml = b.price_ml; }
+      else if(basis==='start'){ ml = (b.side==='fav' && a0>0) ? -a0 : ((b.side==='dog' && b0>0)? b0 : NaN); }
+      else { ml = (b.side==='fav' && a0>0) ? -a0 : ((b.side==='dog' && b0>0)? b0 : NaN); if(basis==='ticket') missingPrices++; }
+
+      if(isWinner){ winners++; totalWinnersProfit += americanProfit(b.stake, ml); }
+      else { losers++; totalLosersStake += b.stake; }
+      b.settled = true;
+    }
+    const bookNet = totalLosersStake - totalWinnersProfit;
+    lastSettlement = { winnerSide: winSide, basis, graded_at: new Date().toISOString(), totals: { handle: totalHandle, winners, losers, paid_prof: totalWinnersProfit, losers_stake: totalLosersStake, book_net: bookNet } };
+
+    let html = '<ul>';
+    html += '<li><b>Winner:</b> ' + (winSide==='fav'?'Favorite':'Underdog') + ' ('+ (basis==='ticket'?'Ticket Price':'Starting Odds') + ')</li>';
+    html += '<li>Total handle (non‑void): <span class="kpi">'+money(totalHandle)+'</span></li>';
+    html += '<li>Winners: '+winners+' • Losers: '+losers+'</li>';
+    html += '<li>Paid to winners (profit only): <span class="kpi">'+money(totalWinnersProfit)+'</span></li>';
+    html += '<li class="kpi">Book Net: '+money(bookNet)+'</li>';
+    if(missingPrices>0 && basis==='ticket'){ html += '<li class="small warn">'+missingPrices+' ticket(s) lacked stored price; fell back to starting odds.</li>'; }
+    // unpaid summary
+    let unpaid = 0, countUnpaid = 0;
+    for(const b of bets){
+      if(b.voided || !b.settled) continue;
+      if(b.side===lastSettlement.winnerSide && !b.paid){
+        const ml = Number.isFinite(b.price_ml)? b.price_ml : NaN;
+        const prof = americanProfit(b.stake, ml);
+        unpaid += (Number.isFinite(prof)? (b.stake + prof) : 0);
+        countUnpaid++;
+      }
+    }
+    html += '<div class="hr"></div><div class="small">Unpaid winners: <b>'+countUnpaid+'</b> • Unpaid payout total: <b>'+money(unpaid)+'</b></div>';
+    html += '</ul>';
+    settlementSummary.innerHTML = html;
+    saveStateToLocal();
+    computeAll();
+  }
+  function ungradeAllTickets(){
+    let count = 0;
+    for(const b of bets){ if(b.settled){ b.settled = false; if(b.paid) b.paid = false; count++; } }
+    lastSettlement = null;
+    showLimitNotice('Ungraded '+count+' ticket(s). You can now void/adjust notes, then re-grade.', false);
+    computeAll(); saveStateToLocal();
+  }
+  function exportPayoutReport(){
+    if(!lastSettlement){ showLimitNotice('Grade tickets first to create a payout report.', true); return; }
+    const rows = [['market_title','ticket_id','bettor','side','stake','ticket_ml','profit','payout_total','paid','timestamp_iso','notes']];
+    for(const b of bets){
+      if(b.voided || !b.settled) continue;
+      const isWinner = (b.side === lastSettlement.winnerSide);
+      if(!isWinner) continue;
+      const ml = Number.isFinite(b.price_ml) ? b.price_ml : NaN;
+      const prof = ticketProfit(b.stake, ml);
+      const payout = Number.isFinite(prof) ? (b.stake + prof) : '';
+      rows.push([marketTitle.value||'', b.id, b.name, b.side, b.stake, Number.isFinite(ml)?ml:'', Number.isFinite(prof)?prof:'', payout, b.paid?1:0, b.ts, b.notes||'']);
+    }
+    const csv = rows.map(r=>r.map(x=>('"'+String(x).replace(/"/g,'""')+'"')).join(',')).join('\n');
+    const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'payout_report.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  }
+  gradeTickets.addEventListener('click', gradeAllTickets);
+  ungradeMarket.addEventListener('click', ungradeAllTickets);
+  exportPayouts.addEventListener('click', exportPayoutReport);
+
+  // Reactivity
+  ['input','change','keyup'].forEach(ev=>{
+    marketTitle.addEventListener(ev, computeAll);
+    overroundPct.addEventListener(ev, computeAll);
+    favStart.addEventListener(ev, computeAll);
+    dogStart.addEventListener(ev, computeAll);
+    targetHoldPct.addEventListener(ev, computeAll);
+    maxPerBet.addEventListener(ev, computeAll);
+    maxPerBettor.addEventListener(ev, computeAll);
+    limitBehavior.addEventListener(ev, computeAll);
+    maxMarketHandle.addEventListener(ev, computeAll);
+    marketOpen.addEventListener(ev, computeAll);
+    maxExpoFav.addEventListener(ev, computeAll);
+    maxExpoDog.addEventListener(ev, computeAll);
+  });
+
+  if(!tryRestoreFromLocal()) computeAll();
+})();
+
+</script>
+</body>
+</html>
